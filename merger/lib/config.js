@@ -20,6 +20,6 @@ const LIMITS = {
   audioRate: 44100,
 };
 
-const FFMPEG_PRESET = process.env.FFMPEG_PRESET || "medium";
+const FFMPEG_PRESET = process.env.FFMPEG_PRESET || "veryfast";
 
 module.exports = { VERSION, LIMITS, FFMPEG_PRESET };

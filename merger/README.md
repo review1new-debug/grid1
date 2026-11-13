@@ -4,7 +4,7 @@
 
 - **Node.js خالص (CommonJS)** بدون أي خطوة بناء: واجهة ثابتة في `public/` + دوال Vercel Serverless في `api/`
 - **كل التخزين في Turso (libSQL)**: بيانات المهام، أجزاء ملفات المصادر، والفيديو الناتج (Blobs) — لا S3 ولا خدمات خارجية
-- **ffmpeg + ffprobe داخل الدالة نفسها** (`ffmpeg-static` + `ffprobe-static`)
+- **ffmpeg + ffprobe داخل الدالة نفسها** (`@ffmpeg-installer/linux-x64` + `@ffprobe-installer/linux-x64` — الثنائيات داخل حزم npm نفسها، بلا سكربتات postinstall تعمل مع bun على Vercel)
 
 ## الحدود
 
@@ -121,7 +121,7 @@ bun run test:http              # اختبار HTTP كامل ضد خادم الت
 | `SOURCE_MAX_MB` | — | 200 |
 | `OUTPUT_MAX_MB` | — | 150 |
 | `MAX_TOTAL_DURATION_SEC` | — | 600 |
-| `FFMPEG_PRESET` | — | medium |
+| `FFMPEG_PRESET` | — | veryfast |
 | `UPLOAD_CHUNK_BYTES` | — | 4194304 |
 
 > `.env` مستثنى في `.gitignore` — لا تضع أسرارًا في المستودع إطلاقًا.

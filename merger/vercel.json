@@ -4,7 +4,7 @@
   "functions": {
     "api/**/*.js": {
       "maxDuration": 60,
-      "includeFiles": "node_modules/{ffmpeg-static/ffmpeg,ffprobe-static/bin/linux/x64/ffprobe}"
+      "includeFiles": "node_modules/@*-installer/linux-x64/f*"
     }
   },
   "crons": [

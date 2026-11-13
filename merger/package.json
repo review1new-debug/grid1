@@ -10,8 +10,8 @@
     "test:http": "node scripts/test-http.js"
   },
   "dependencies": {
-    "@libsql/client": "^0.14.0",
-    "ffmpeg-static": "^5.2.0",
-    "ffprobe-static": "^3.1.0"
+    "@ffmpeg-installer/linux-x64": "4.1.0",
+    "@ffprobe-installer/linux-x64": "5.2.0",
+    "@libsql/client": "^0.14.0"
   }
 }

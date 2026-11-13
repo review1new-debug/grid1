@@ -7,15 +7,40 @@ const { spawn } = require("node:child_process");
 const { getDb, patchJob } = require("./db");
 const { LIMITS, FFMPEG_PRESET } = require("./config");
 
-// ————— ضمان صلاحية تنفيذ الثنائيات (قد تفقد في الاستضافة) — ننسخها إلى /tmp بصلاحية 755 عند الحاجة —————
-function resolveBin(npmModule, envKey, fallbackCmd) {
+// ————— حل مسار الثنائيات: متغير بيئة ← حزم المثبّت ← مسارات معروفة ← الوحدات القديمة ← أمر النظام —————
+// حزم @ffmpeg-installer/linux-x64 و@ffprobe-installer/linux-x64 تحمل الثنائي داخل حزمة npm نفسها
+// (بدون سكربتات postinstall التي يتجاهلها bun على Vercel) — الثنائي في جذر الحزمة
+const KNOWN_BIN_BASES = [
+  path.join(__dirname, "..", "node_modules"), // جذر المشروع (محليًا وعلى Vercel)
+  path.join(process.cwd(), "node_modules"),   // احتياط لتغيّر cwd
+  "/var/task/node_modules",                    // جذر حزمة الدالة على Vercel (احتياط)
+];
+
+function firstExisting(candidates) {
+  for (const c of candidates) if (c && fs.existsSync(c)) return c;
+  return null;
+}
+
+function resolveBinary({ envKey, installerPkg, binaryName, legacyModule, legacyPath, fallbackCmd }) {
   if (process.env[envKey] && fs.existsSync(process.env[envKey])) return process.env[envKey];
+  const candidates = [];
+  // 1) حزمة المثبّت — عبر require.resolve الصريح على package.json (الحزمة بلا index.js)
   try {
-    const mod = require(npmModule);
-    const p = typeof mod === "string" ? mod : mod.path;
-    if (p && fs.existsSync(p)) return p;
+    const dir = path.dirname(require.resolve(`${installerPkg}/package.json`));
+    candidates.push(path.join(dir, binaryName));
   } catch {}
-  return fallbackCmd; // ثنائي النظام كاحتياط أخير
+  // 2) مسارات معروفة نسبةً إلى جذور node_modules المحتملة
+  for (const base of KNOWN_BIN_BASES) {
+    candidates.push(path.join(base, installerPkg, binaryName));
+    candidates.push(path.join(base, legacyPath));
+  }
+  // 3) الوحدة القديمة إن وُجدت (ffmpeg-static / ffprobe-static)
+  try {
+    const mod = require(legacyModule);
+    const p = typeof mod === "string" ? mod : mod.path;
+    if (p) candidates.push(p);
+  } catch {}
+  return firstExisting(candidates) || fallbackCmd;
 }
 
 function ensureExecutable(binPath) {
@@ -24,17 +49,37 @@ function ensureExecutable(binPath) {
     return binPath;
   } catch {
     const tmp = path.join(os.tmpdir(), `merger-bin-${path.basename(binPath)}-${process.pid}`);
-    fs.copyFileSync(binPath, tmp);
-    fs.chmodSync(tmp, 0o755);
-    return tmp;
+    try {
+      fs.copyFileSync(binPath, tmp);
+      fs.chmodSync(tmp, 0o755);
+      return tmp;
+    } catch {
+      throw new Error(
+        `الثنائي ${path.basename(binPath)} غير موجود في حزمة الدالة (تم الفحص: ${binPath}) — تأكد أن includeFiles في vercel.json يشمل node_modules/@*-installer/linux-x64/f*`,
+      );
+    }
   }
 }
 
 function ffmpegPath() {
-  return ensureExecutable(resolveBin("ffmpeg-static", "FFMPEG_PATH", "ffmpeg"));
+  return ensureExecutable(resolveBinary({
+    envKey: "FFMPEG_PATH",
+    installerPkg: "@ffmpeg-installer/linux-x64",
+    binaryName: "ffmpeg",
+    legacyModule: "ffmpeg-static",
+    legacyPath: path.join("ffmpeg-static", "ffmpeg"),
+    fallbackCmd: "ffmpeg",
+  }));
 }
 function ffprobePath() {
-  return ensureExecutable(resolveBin("ffprobe-static", "FFPROBE_PATH", "ffprobe"));
+  return ensureExecutable(resolveBinary({
+    envKey: "FFPROBE_PATH",
+    installerPkg: "@ffprobe-installer/linux-x64",
+    binaryName: "ffprobe",
+    legacyModule: "ffprobe-static",
+    legacyPath: path.join("ffprobe-static", "bin", process.platform, process.arch, "ffprobe"),
+    fallbackCmd: "ffprobe",
+  }));
 }
 
 function run(bin, args, onStdout) {
