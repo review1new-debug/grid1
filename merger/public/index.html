@@ -23,6 +23,15 @@
   .logo .ic{width:44px;height:44px;border-radius:12px;background:var(--grad);display:grid;place-items:center;font-size:22px}
   h1{font-size:1.5rem;background:var(--grad);-webkit-background-clip:text;background-clip:text;color:transparent}
   .sub{color:var(--muted);font-size:.85rem;margin-top:4px}
+  .status-pill{display:none;align-items:center;gap:7px;margin-top:10px;font-size:.76rem;font-weight:600;
+    border-radius:99px;padding:5px 12px;width:fit-content;border:1px solid var(--line);background:rgba(255,255,255,.03)}
+  .status-pill.show{display:inline-flex}
+  .status-pill .sdot{width:8px;height:8px;border-radius:50%;background:var(--warn);flex:none;animation:pulse 1.2s infinite}
+  .status-pill.ok{border-color:rgba(52,211,153,.45);color:var(--ok)}
+  .status-pill.ok .sdot{background:var(--ok)}
+  .status-pill.bad{border-color:rgba(248,113,113,.45);color:var(--err)}
+  .status-pill.bad .sdot{background:var(--err);animation:none}
+  @keyframes pulse{50%{opacity:.3}}
   .card{background:linear-gradient(180deg,var(--card),var(--card2));border:1px solid var(--line);border-radius:16px;padding:20px;margin-top:16px}
   .card h2{font-size:1.05rem;margin-bottom:12px;display:flex;align-items:center;gap:8px}
   .dot{width:9px;height:9px;border-radius:50%;background:var(--grad)}
@@ -82,6 +91,7 @@
     <div>
       <h1>دمج الفيديوهات</h1>
       <div class="sub">اربط عدة مقاطع في فيديو واحد عالي الجودة (H.264 + AAC حتى 1080p) — مجانًا وبدون تسجيل</div>
+      <div class="status-pill" id="dbStatus"><span class="sdot"></span><span id="dbStatusTxt">جارٍ فحص الاتصال بقاعدة البيانات…</span></div>
     </div>
   </div>
 </header>
@@ -362,6 +372,27 @@ $("newBtn").onclick = () => {
   history.replaceState(null, "", location.pathname); render();
 };
 $("copyBtn") && ($("copyBtn").textContent = "📋 نسخ الرابط");
+
+// ————— مؤشر حالة الاتصال بقاعدة البيانات عند التحميل —————
+// /api/config ترجع turso:"connected" عند الجاهزية أو 503 + turso:"error"
+(async function checkDb() {
+  const pill = $("dbStatus"), txt = $("dbStatusTxt");
+  pill.classList.add("show");
+  try {
+    const r = await fetch("/api/config", { signal: AbortSignal.timeout(8000) });
+    const j = await r.json().catch(() => ({}));
+    if (r.ok && j.turso === "connected") {
+      pill.classList.add("ok");
+      txt.textContent = "تم الاتصال — قاعدة البيانات جاهزة";
+    } else {
+      pill.classList.add("bad");
+      txt.textContent = `تعذر الاتصال بقاعدة البيانات (رمز ${r.status}) — أعد تحميل الصفحة`;
+    }
+  } catch {
+    pill.classList.add("bad");
+    txt.textContent = "تعذر الوصول للخدمة — تحقق من الشبكة وأعد المحاولة";
+  }
+})();
 
 // ————— استئناف العرض بعد تحديث الصفحة عبر #job=<id> —————
 (async function resume() {
