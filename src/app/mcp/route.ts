@@ -94,14 +94,14 @@ function registerTools(server: McpServer) {
       inputSchema: {
         urls: z
           .array(z.string())
-          .min(2)
-          .max(10)
+          .min(2, { message: "الدمج يحتاج مقطعَين على الأقل. مرّر urls (روابط مباشرة) أو task_ids لمهام مكتملة." })
+          .max(10, { message: "أقصى عدد مقاطع للدمج هو 10 (خدمة الدمج تقبل 10 مقاطع كحد أقصى)." })
           .optional()
           .describe("Public direct video URLs (http/https) in merge order — the first clip starts the final video."),
         task_ids: z
           .array(z.string())
-          .min(2)
-          .max(10)
+          .min(2, { message: "الدمج يحتاج مقطعَين على الأقل. مرّر urls (روابط مباشرة) أو task_ids لمهام مكتملة." })
+          .max(10, { message: "أقصى عدد مقاطع للدمج هو 10 (خدمة الدمج تقبل 10 مقاطع كحد أقصى)." })
           .optional()
           .describe("Alternative to urls: task_ids of COMPLETED video generation tasks — their result URLs are merged in this order."),
         wait_seconds: z.number().int().min(0).max(240).default(60),

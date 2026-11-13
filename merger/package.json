@@ -1,0 +1,17 @@
+{
+  "name": "video-merger-api",
+  "version": "2.0.0",
+  "private": true,
+  "description": "خدمة دمج الفيديوهات على Vercel — Node.js خالص + Turso + ffmpeg (بدون أي خطوة بناء)",
+  "main": "scripts/dev-server.js",
+  "scripts": {
+    "dev": "node scripts/dev-server.js",
+    "test:unit": "node scripts/test-unit.js",
+    "test:http": "node scripts/test-http.js"
+  },
+  "dependencies": {
+    "@libsql/client": "^0.14.0",
+    "ffmpeg-static": "^5.2.0",
+    "ffprobe-static": "^3.1.0"
+  }
+}
