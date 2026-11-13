@@ -96,9 +96,9 @@ curl -X POST "https://<نطاقك>/api/upload?job=<jobId>&seq=0&chunk=0" \
 2. أضف في **Settings → Environment Variables**:
    - `TURSO_DATABASE_URL` و `TURSO_AUTH_TOKEN` (إلزاميان)
    - اختياري: `MERGER_PUBLIC_BASE` لفرض نطاق الروابط، وحدود الحجم إن أردت
-3. **Deploy** — `vercel.json` يضبط `maxDuration: 300` لكل الدوال + Cron يومي للتنظيف
+3. **Deploy** — `vercel.json` يضبط `maxDuration: 60` (الحد الأقصى لخطة Hobby؛ على خطة Pro ارفعه إلى 300 في `vercel.json`) + Cron يومي للتنظيف. الثنائيات تُضمَّن تلقائيًا عبر `includeFiles` بنمط نصّي واحد (Vercel يشترط نصًا لا مصفوفة) يشمل `ffmpeg` و`ffprobe` لنظام linux/x64 فقط.
 
-> ملاحظة: مدة الدالة على خطة Hobby محدودة — المقاطع الصغيرة (~10–30 ثانية) تُدمج خلالها بسهولة، وللأحجام الكبيرة يُفضَّل ترقية الخطة. ثنائيات ffmpeg تُضمَّن تلقائيًا عبر `includeFiles` في `vercel.json`.
+> ملاحظة: مدة الدالة على خطة Hobby محدودة بـ **60 ثانية** — المقاطع الصغيرة (~10–30 ثانية) تُدمج خلالها بسهولة، وللأحجام الكبيرة يُفضَّل ترقية الخطة ثم رفع `maxDuration`.
 
 ## التشغيل والاختبار محليًا
 
