@@ -86,5 +86,16 @@ const { createClient } = require('@libsql/client');
 })();
 "
 
+echo; echo "== [10] «دافع» اللوحة: مهمة جارية مجمدة تُكمل تلقائيًا عبر GET /api/tasks =="
+echo "-- استدعاء أول (يفحص المزود: 40%) ثم انتظار 9 ثوانٍ ثم استدعاء ثانٍ (يكتمل)"
+curl -s --max-time 40 "$BASE/api/tasks?limit=10" > /dev/null
+sleep 9
+curl -s --max-time 40 "$BASE/api/tasks?limit=10" | python3 -c "
+import json,sys
+d=json.load(sys.stdin)
+t=[x for x in d['tasks'] if x['id'].startswith('55555555')][0]
+print('  stuck task:', t['status'], '| progress:', t['progress'], '| resumable:', t['resumable'], '| urls:', t['result_urls'])
+"
+
 cleanup
 echo; echo "== تم الانتهاء =="

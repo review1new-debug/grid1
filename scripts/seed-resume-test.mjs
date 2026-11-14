@@ -73,3 +73,12 @@ await db.execute({
 });
 
 console.log(JSON.stringify({ videoTask, imageTask, mergeTask, doneTask, k1, k2 }, null, 2));
+
+// 5) مهمة فيديو «جارية مجمدة» (لها provider_task_id لكن أحدًا لم يسأل المزود عنها)
+// → يجب أن يكملها «دافع» اللوحة تلقائيًا إلى completed عبر checkAndUpdateTask
+const stuckTask = "55555555-5555-4555-8555-555555555555";
+await db.execute({
+  sql: `INSERT INTO tasks (id, provider, provider_task_id, key_id, model, type, prompt, params_json, status, progress, updated_at)
+        VALUES (?, 'cometapi', 'mock-v1', ?, 'grok-imagine-video-1-5-preview', 'video', 'مهمة مجمدة للاختبار', '{}', 'processing', 20, datetime('now','-2 minutes'))`,
+  args: [stuckTask, k2],
+});
