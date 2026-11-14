@@ -5,7 +5,7 @@
 import { ensureSchema, insertTask, getTask, updateTask } from "./turso";
 import { ProviderError, sanitizePublicError } from "./errors";
 import { fmtMergeNeedsTwo, fmtMergeDone, fmtProcessing, fmtFailed, fmtMergerNotConfigured, INTERNAL_WAIT_MSG } from "./format";
-import { clampWait, noopNotify } from "./generation";
+import { clampWait, noopNotify, type ResumeResult } from "./generation";
 import type { ProgressNotifier, TaskRow, ToolResponse } from "./types";
 
 const RAW_BASE = (process.env.MERGER_API_BASE || "").trim();
@@ -69,9 +69,9 @@ async function mergerCreateJob(videos: string[]): Promise<{ jobId: string; statu
   return b as { jobId: string };
 }
 
-/** يستغرق ~10–15 ثانية (blocking) — نجاح 200 → done + videoUrl */
-async function mergerProcess(jobId: string): Promise<{ status: string; videoUrl?: string; downloadUrl?: string; size?: number; duration?: number; resolution?: string; expiresAt?: string }> {
-  return (await mergerFetch(`/api/jobs/${encodeURIComponent(jobId)}/process`, { method: "POST" }, 240_000)) as never;
+/** يستغرق ~10–15 ثانية (blocking) — نجاح 200 → done + videoUrl — المهلة قابلة للضبط (resume يستخدم 45 ثانية) */
+async function mergerProcess(jobId: string, timeoutMs = 240_000): Promise<{ status: string; videoUrl?: string; downloadUrl?: string; size?: number; duration?: number; resolution?: string; expiresAt?: string }> {
+  return (await mergerFetch(`/api/jobs/${encodeURIComponent(jobId)}/process`, { method: "POST" }, timeoutMs)) as never;
 }
 
 export interface MergerJobState {
@@ -283,6 +283,68 @@ export async function runMerge(
   }
 
   return { text: fmtProcessing(taskId, lastProgress) };
+}
+
+/**
+ * زر «استكمال» لمهمة دمج فاشلة أو لم تُنشأ لدى الخدمة بعد:
+ * ينشئ مهمة جديدة لدى خدمة الدمج من الروابط المحفوظة (المهمة القديمة ميتة ولا تُعاد)
+ * وينتظر النتيجة حتى 45 ثانية — إن انقضت يبقى الدمج مستمرًا لدى الخدمة وتُجلب النتيجة تلقائيًا لاحقًا.
+ * تُستدعى من POST /api/tasks/{id}/resume (زر «استكمال» في اللوحة).
+ */
+export async function resumeMergeTask(t: TaskRow): Promise<ResumeResult> {
+  await ensureSchema();
+  if (!mergerConfigured()) {
+    return { task: t, message: "خدمة الدمج غير مهيأة — اضبط MERGER_API_BASE أولًا" };
+  }
+
+  const urls = ((t.params?.resolvedUrls as string[]) || []).filter((u) => isPublicHttpUrl(u));
+  if (urls.length < 2) {
+    const msg = "روابط المصادر المحفوظة غير مكتملة — لا يمكن استكمال هذا الدمج";
+    const cur = await updateTask(t.id, { status: "failed", error_message: msg });
+    return { task: cur!, message: msg };
+  }
+
+  let jobId = "";
+  try {
+    const job = await mergerCreateJob(urls);
+    jobId = job.jobId;
+  } catch (e) {
+    if (e instanceof MergerHttpError) {
+      const cur = await updateTask(t.id, { status: "failed", error_message: e.message });
+      return { task: cur!, message: sanitizePublicError(e.message) };
+    }
+    // خطأ شبكتنا — نبقيها جارية وتُعاد المحاولة تلقائيًا مع أي استعلام لاحق
+    const cur = await updateTask(t.id, { status: "processing", error_message: INTERNAL_WAIT_MSG });
+    return { task: cur!, message: "تعذّر الاتصال بخدمة الدمج — ستُعاد المحاولة تلقائيًا" };
+  }
+
+  // صفّر أعلام process حتى يُسمح بتنفيذه من جديد (تنفيذ المهمة القديمة لم يكتمل أصلًا)
+  await updateTask(t.id, {
+    provider_task_id: jobId,
+    status: "processing",
+    progress: 3,
+    error_message: null,
+    params: { processDone: false, processStarted: false, processStartedAt: 0 },
+  });
+
+  // تنفيذ متزامن بحد 45 ثانية (الدمج العادي 10–15 ثانية) وضمن حد 60 ثانية لوظائف Vercel
+  try {
+    const r = await mergerProcess(jobId, 45_000);
+    if (r.status === "done" && r.videoUrl) {
+      const cur = await updateTask(t.id, { status: "completed", progress: 100, result_urls: [r.videoUrl] });
+      return { task: cur!, message: "اكتمل الدمج بنجاح — النتيجة جاهزة" };
+    }
+  } catch (e) {
+    if (e instanceof MergerHttpError) {
+      const cur = await updateTask(t.id, { status: "failed", error_message: e.message });
+      return { task: cur!, message: sanitizePublicError(e.message) };
+    }
+    // خطأ شبكتنا — الخدمة تكمل الدمج وتُجلب النتيجة مع التحديث التالي (fireProcess/get_task)
+  }
+
+  const cur = (await getTask(t.id))!;
+  if (cur.status === "completed") return { task: cur, message: "اكتمل الدمج بنجاح — النتيجة جاهزة" };
+  return { task: cur, message: "الدمج مستمر الآن — ستُحدَّث الحالة في اللوحة تلقائيًا" };
 }
 
 /** get_task لمهمة دمج — تحديث حي من الخدمة مع نفس قواعد الفشل الحتمي */

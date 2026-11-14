@@ -403,6 +403,121 @@ export async function refreshTask(taskId: string): Promise<ToolResponse> {
   return { text: fmtProcessing(t2.id, Math.max(t2.progress, r.progress ?? 0)) };
 }
 
+// ————— زر «استكمال» (الاستئناف اليدوي الفوري للمهمة) —————
+
+/** قفل ذاكرة يمنع تزامن الاستكمال لنفس المهمة (نقر مزدوج أو طلبات متوازية) */
+const resumeInFlight = new Set<string>();
+
+/**
+ * نقطة بداية الاستكمال: أول مفتاح بعد آخر محاولة مسجَّلة للمهمة،
+ * بحيث «يكمل بالـ API الثاني/الثالث/الباقي» بدل إعادة التجربة من أول القائمة.
+ * إن كان مفتاح آخر محاولة غير موجود في القائمة الحالية (مُعطَّل مثلًا) → نبدأ من أولها.
+ */
+function nextStartIndex(pool: KeyRow[], attempts: Attempt[]): number {
+  for (let i = attempts.length - 1; i >= 0; i--) {
+    const idx = pool.findIndex((k) => k.id === attempts[i].keyId);
+    if (idx >= 0) return idx + 1;
+  }
+  return 0;
+}
+
+export interface ResumeResult {
+  task: TaskRow;
+  message: string;
+}
+
+/**
+ * استكمال مهمة صورة/فيديو فورًا من المفتاح التالي لآخر محاولة فاشلة:
+ * إعادة إنشاء بنفس المعطيات ← نافذة انتظار قصيرة (30 ثانية) تُبث فيها الحالة وتُعاد النتيجة إن ظهرت سريعًا
+ * (تكفي غالبًا للصور؛ الفيديو يبقى جارًٍ ويُتابع تلقائيًا عبر اللوحة أو get_task).
+ * تُستدعى من POST /api/tasks/{id}/resume (زر «استكمال» في اللوحة).
+ */
+export async function resumeGenerationTask(t: TaskRow, notify: ProgressNotifier = noopNotify): Promise<ResumeResult> {
+  if (resumeInFlight.has(t.id)) {
+    const cur = (await getTask(t.id))!;
+    return { task: cur, message: "جارٍ استكمال هذه المهمة بالفعل" };
+  }
+  resumeInFlight.add(t.id);
+  try {
+    const type = t.type as "image" | "video";
+    const modelDef = resolveModel(t.model, type);
+    if (!modelDef) {
+      const msg = `موديل غير معروف في المهمة: ${t.model}`;
+      const cur = await updateTask(t.id, { status: "failed", error_message: msg });
+      return { task: cur!, message: msg };
+    }
+
+    const pool = await getKeyPool(modelDef.providers);
+    if (!pool.length) {
+      const cur = (await getTask(t.id))!;
+      return { task: cur, message: "لا توجد مفاتيح متاحة — أضف مفتاحًا من مدير المفاتيح ثم أعد الاستكمال" };
+    }
+
+    // إعادة الإنشاء بنفس المعطيات بدءًا من المفتاح التالي لآخر محاولة
+    const args = (t.params || {}) as Record<string, unknown>;
+    const startIndex = nextStartIndex(pool, t.attempts || []);
+    const outcome = await tryCreateAcrossPool(modelDef, args, type, t.id, startIndex);
+
+    if (outcome.paramsError) {
+      const msg = `خطأ في المعطيات: ${outcome.paramsError}`;
+      const cur = await updateTask(t.id, { status: "failed", error_message: msg });
+      return { task: cur!, message: msg };
+    }
+    if (!outcome.ok) {
+      const msg = "تعذّر الاستكمال على جميع المصادر المتاحة الآن — أعد المحاولة بعد قليل";
+      const cur = await updateTask(t.id, {
+        status: t.status === "failed" ? "failed" : "processing",
+        error_message: msg,
+        params: { lastCreateAttemptAt: outcome.lastAttemptAt },
+      });
+      return { task: cur!, message: msg };
+    }
+
+    // صور متزامنة: النتيجة فورية
+    if (outcome.kind === "sync" && outcome.urls?.length) {
+      const cur = await updateTask(t.id, {
+        status: "completed",
+        progress: 100,
+        result_urls: outcome.urls,
+        provider: outcome.provider,
+        key_id: outcome.keyId,
+        error_message: null,
+      });
+      return { task: cur!, message: "اكتملت المهمة بنجاح — النتيجة جاهزة" };
+    }
+
+    await updateTask(t.id, {
+      provider: outcome.provider,
+      provider_task_id: outcome.providerTaskId,
+      key_id: outcome.keyId,
+      status: "processing",
+      progress: 5,
+      error_message: null,
+    });
+
+    // نافذة انتظار قصيرة (30 ثانية) مع بث التقدم — ضمن حد 60 ثانية لوظائف Vercel
+    const deadline = Date.now() + 30_000;
+    let lastProgress = 5;
+    while (Date.now() < deadline) {
+      const cur = (await getTask(t.id))!;
+      if (cur.status === "completed") return { task: cur, message: "اكتملت المهمة بنجاح — النتيجة جاهزة" };
+      if (cur.status === "failed") return { task: cur, message: cur.error_message || "فشلت المهمة" };
+      const r = await checkAndUpdateTask(cur);
+      const fresh = (await getTask(t.id))!;
+      if (r.state === "completed") return { task: fresh, message: "اكتملت المهمة بنجاح — النتيجة جاهزة" };
+      if (r.state === "failed") return { task: fresh, message: fresh.error_message || "فشلت المهمة" };
+      lastProgress = Math.max(lastProgress, Math.min(95, Math.round(fresh.progress || 0)));
+      await notify(lastProgress, 100, `قيد الاستكمال… ${lastProgress}%`);
+      await sleep(POLL_INTERVAL_MS);
+    }
+
+    const final = (await getTask(t.id))!;
+    return { task: final, message: "استُكملت المهمة وتعمل الآن — ستُحدَّث حالتها في اللوحة تلقائيًا" };
+  } finally {
+    resumeInFlight.delete(t.id);
+  }
+}
+
 /** list_media — أحدث الوسائط المخزنة بروابطها من قاعدة البيانات (بدون إعادة توليد) */
 export async function listMedia(args: { type?: string; status?: string; limit?: number }): Promise<ToolResponse> {
   await ensureSchema();

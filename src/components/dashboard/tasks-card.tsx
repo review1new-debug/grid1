@@ -15,6 +15,7 @@ interface TaskItem {
   result_urls: string[] | null;
   error_message: string | null;
   attempts_count: number;
+  resumable: boolean;
   created_at: string;
   completed_at: string | null;
 }
@@ -51,6 +52,7 @@ function fmtTime(iso: string): string {
 export function TasksCard() {
   const [stats, setStats] = useState<Stats>({ total: 0, completed: 0, failed: 0, processing: 0 });
   const [tasks, setTasks] = useState<TaskItem[]>([]);
+  const [resumingId, setResumingId] = useState<string | null>(null);
   const { toast } = useToast();
 
   const refresh = useCallback(async () => {
@@ -80,6 +82,29 @@ export function TasksCard() {
       toast({ title: "تم نسخ الرابط" });
     } catch {
       /* تجاهل */
+    }
+  };
+
+  // زر «استكمال»: يواصل المهمة فورًا على المفتاح/الخدمة التالية عبر POST /api/tasks/{id}/resume
+  const resumeTask = async (id: string) => {
+    setResumingId(id);
+    try {
+      const res = await fetch(`/api/tasks/${id}/resume`, { method: "POST" });
+      const data = await res.json().catch(() => ({}));
+      if (!res.ok) {
+        toast({
+          title: "تعذّر الاستكمال",
+          description: data.error || `رمز الاستجابة ${res.status}`,
+          variant: "destructive",
+        });
+      } else {
+        toast({ title: data.message || "تم بدء الاستكمال" });
+      }
+      await refresh();
+    } catch {
+      toast({ title: "تعذّر الوصول للخدمة — أعد المحاولة", variant: "destructive" });
+    } finally {
+      setResumingId(null);
     }
   };
 
@@ -144,6 +169,20 @@ export function TasksCard() {
 
               {t.status === "failed" && t.error_message && (
                 <p className="text-xs text-rose-300/90 leading-relaxed">❌ {t.error_message}</p>
+              )}
+
+              {/* زر الاستكمال — للمهام الفاشلة أو التي لم ينجح إنشاؤها لدى المزود بعد */}
+              {t.resumable && (
+                <div className="flex items-center gap-2 flex-wrap">
+                  <button
+                    onClick={() => resumeTask(t.id)}
+                    disabled={resumingId === t.id}
+                    className="rounded-md border border-amber-500/40 bg-amber-500/10 px-3 py-1.5 text-[11px] font-semibold text-amber-300 hover:bg-amber-500/20 disabled:cursor-not-allowed disabled:opacity-60"
+                  >
+                    {resumingId === t.id ? "جارٍ الاستكمال…" : "استكمال المهمة"}
+                  </button>
+                  <span className="text-[10px] text-slate-500">يواصل التنفيذ تلقائيًا على المزود التالي المتاح</span>
+                </div>
               )}
 
               {/* أزرار فتح الروابط عند الاكتمال */}

@@ -1,7 +1,7 @@
 // GET /api/tasks — إحصائيات + أحدث المهام للوحة المتابعة الحية
 import { NextResponse } from "next/server";
 import { listRecentTasks, taskStats } from "@/lib/turso";
-import { sanitizePublicError } from "@/lib/errors";
+import { toTaskItem } from "@/lib/task-view";
 
 export const runtime = "nodejs";
 export const dynamic = "force-dynamic";
@@ -16,19 +16,6 @@ export async function GET(req: Request) {
 
   return NextResponse.json({
     stats,
-    tasks: tasks.map((t) => ({
-      id: t.id,
-      type: t.type,
-      model: t.model,
-      provider: t.provider,
-      status: t.status,
-      progress: t.progress,
-      prompt: t.prompt,
-      result_urls: t.result_urls,
-      error_message: t.error_message ? sanitizePublicError(t.error_message) : null,
-      attempts_count: (t.attempts || []).length,
-      created_at: t.created_at,
-      completed_at: t.completed_at,
-    })),
+    tasks: tasks.map(toTaskItem),
   });
 }
